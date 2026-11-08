@@ -54,7 +54,6 @@ _PARTIAL_PASS_THROUGH_REDUCE_OPS = ("sum", "avg", "min", "max")
         aten.detach_.default,
         aten.alias.default,
         aten.fill_.Scalar,
-        aten.view.dtype,
         aten.zero_.default,
         prims.view_of.default,
     ],
@@ -77,6 +76,31 @@ def propagate_single_input_single_dim_strategy(
     ]
     for reduce_op in _PARTIAL_PASS_THROUGH_REDUCE_OPS:
         strategies.append([Partial(reduce_op), Partial(reduce_op)])
+    return strategies
+
+
+@register_single_dim_strategy(
+    aten.view.dtype,
+    schema_info=RuntimeSchemaInfo(static_argnum=1, static_kwargkey=["dtype"]),
+    allow_unbacked_sharding=True,
+    allow_uneven_sharding=True,
+)
+def view_dtype_single_dim_strategy(
+    op: OpOverload, args_schema: ArgsType, kwargs_schema: KwargsType
+) -> list[list[Placement | _ShardingPlaceholder]]:
+    """A dtype bitcast cannot generally commute with a pending reduction."""
+    input_meta = cast(TensorMeta, args_schema[0])
+    target_dtype = cast(
+        torch.dtype,
+        args_schema[1] if len(args_schema) > 1 else kwargs_schema["dtype"],
+    )
+    strategies: list[list[Placement | _ShardingPlaceholder]] = [
+        [_ShardingPlaceholder(dim), _ShardingPlaceholder(dim)]
+        for dim in range(len(input_meta.shape))
+    ]
+    if target_dtype == input_meta.dtype:
+        for reduce_op in _PARTIAL_PASS_THROUGH_REDUCE_OPS:
+            strategies.append([Partial(reduce_op), Partial(reduce_op)])
     return strategies
 
 

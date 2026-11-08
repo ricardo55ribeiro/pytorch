@@ -1687,6 +1687,61 @@ class DistBucketizeTest(LocalDTensorTestBase):
             self.assertEqual(result.full_tensor(), expected)
 
 
+class DistViewDtypeTest(LocalDTensorTestBase):
+    @with_comms
+    def test_view_dtype_partial_sum_numerics(self):
+        with LocalTensorMode(ranks=self.world_size):
+            mesh = self.build_device_mesh()
+
+            a = torch.ones(
+                1, self.world_size,
+                dtype=torch.float32,
+                device=self.device_type,
+            )
+            b = torch.arange(
+                1, self.world_size + 1,
+                dtype=torch.float32,
+                device=self.device_type,
+            ).reshape(-1, 1)
+
+            partial = (
+                distribute_tensor(a, mesh, [Shard(1)])
+                @ distribute_tensor(b, mesh, [Shard(0)])
+            )
+
+            expected_float = a @ b
+
+            self.assertEqual(partial.placements, (Partial(),))
+            self.assertEqual(partial.full_tensor(), expected_float)
+
+            actual = partial.view(torch.int32).full_tensor()
+            expected = expected_float.view(torch.int32)
+
+            self.assertEqual(actual, expected)
+
+    @with_comms
+    def test_view_dtype_partial_cache_and_itemsize(self):
+        with LocalTensorMode(ranks=self.world_size):
+            mesh = self.build_device_mesh()
+            local = torch.tensor(
+                [[1.0, 2.0, 3.0, 4.0]],
+                dtype=torch.float32,
+                device=self.device_type,
+            )
+            partial = DTensor.from_local(local, mesh, [Partial("sum")])
+
+            unchanged = partial.view(torch.float32)
+            self.assertEqual(unchanged.placements, (Partial(),))
+
+            expected_float = partial.full_tensor()
+
+            for dtype in (torch.int32, torch.int16, torch.float64):
+                result = partial.view(dtype)
+
+                self.assertEqual(result.placements, (Replicate(),))
+                self.assertEqual(result.full_tensor(), expected_float.view(dtype))
+
+
 class DistToCopyTest(LocalDTensorTestBase):
     @with_comms
     def test_to_copy_partial_reduces_for_nonlinear_cast(self):
